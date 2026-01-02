@@ -1,0 +1,120 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: blog_postgres
+    
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    
+    networks:
+      - backend_network
+    
+    restart: always
+    
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  redis:
+    image: redis:7-alpine
+    container_name: blog_redis
+    command: redis-server --appendonly yes
+
+    volumes:
+      - redis_data:/data
+    
+    networks:
+      - backend_network
+  
+    restart: always
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      
+  django:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: blog_django
+    
+    command: gunicorn --bind 0.0.0.0:8000 --workers 4 config.wsgi:application
+  
+    environment:
+      - DEBUG=${DEBUG}
+      - SECRET_KEY=${SECRET_KEY}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    
+    volumes:
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    
+    networks:
+      - frontend_network
+      - backend_network
+    
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    
+    restart: always
+    
+    expose:
+      - "8000"
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: blog_nginx
+    
+    volumes:
+      - static_volume:/app/staticfiles:ro  
+      - media_volume:/app/media:ro        
+    
+    networks:
+      - frontend_network
+    
+    ports:
+      - "80:80"
+    
+    depends_on:
+      - django
+    
+    restart: always
+
+networks:
+  frontend_network:
+    driver: bridge
+  
+  backend_network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  
+  redis_data:
+    driver: local
+  
+  static_volume:
+    driver: local
+  
+  media_volume:
+    driver: local
